@@ -12,27 +12,58 @@ type Message = {
 export default function App() {
   const [isLogin, setIsLogin] = useState(true);
   const [showChat, setShowChat] = useState(false);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatTitle, setChatTitle] = useState("General chat");
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Demo only: authentication is not connected to a server yet.
+    setAuthError("");
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      setAuthError("Please enter your email address.");
+      return;
+    }
+
+    if (password.length < 8) {
+      setAuthError("Your password must be at least 8 characters.");
+      return;
+    }
+
+    if (!isLogin && password !== confirmPassword) {
+      setAuthError("Your passwords do not match.");
+      return;
+    }
+
+    // Demo only: this does not authenticate against a real account.
+    setEmail(normalizedEmail);
     setShowChat(true);
+    setPassword("");
+    setConfirmPassword("");
   }
 
   function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const text = message.trim();
+
     if (!text) return;
 
     setMessages((previous) => [
       ...previous,
-      { id: Date.now(), text, sender: "me" },
+      {
+        id: Date.now(),
+        text,
+        sender: "me",
+      },
     ]);
 
     setMessage("");
@@ -41,7 +72,16 @@ export default function App() {
   function logout() {
     setShowChat(false);
     setPassword("");
+    setConfirmPassword("");
+    setAuthError("");
     setMessage("");
+  }
+
+  function switchAuthMode() {
+    setIsLogin((previous) => !previous);
+    setPassword("");
+    setConfirmPassword("");
+    setAuthError("");
   }
 
   if (showChat) {
@@ -57,7 +97,9 @@ export default function App() {
             <span className="user-avatar">
               {email.charAt(0).toUpperCase() || "U"}
             </span>
+
             <span className="user-email">{email}</span>
+
             <button className="logout-button" onClick={logout}>
               Log out
             </button>
@@ -73,6 +115,7 @@ export default function App() {
               onClick={() => setChatTitle("General chat")}
             >
               <span className="conversation-avatar">G</span>
+
               <span>
                 <strong>General chat</strong>
                 <small>Chat with everyone</small>
@@ -102,7 +145,9 @@ export default function App() {
                 <div className="empty-chat">
                   <div className="empty-chat-icon">✦</div>
                   <h3>Welcome to ChatApp!</h3>
-                  <p>Send a message to get your conversation started.</p>
+                  <p>
+                    Send a message to get your conversation started.
+                  </p>
                 </div>
               ) : (
                 messages.map((item) => (
@@ -147,7 +192,10 @@ export default function App() {
         </div>
 
         <div className="auth-heading">
-          <h1>{isLogin ? "Welcome back" : "Create your account"}</h1>
+          <h1>
+            {isLogin ? "Welcome back" : "Create your account"}
+          </h1>
+
           <p>
             {isLogin
               ? "Log in to continue your conversations."
@@ -157,6 +205,7 @@ export default function App() {
 
         <form onSubmit={handleSubmit}>
           <label htmlFor="email">Email address</label>
+
           <input
             id="email"
             type="email"
@@ -168,23 +217,55 @@ export default function App() {
           />
 
           <label htmlFor="password">Password</label>
+
           <input
             id="password"
             type="password"
             placeholder="Enter your password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            autoComplete={isLogin ? "current-password" : "new-password"}
+            autoComplete={
+              isLogin ? "current-password" : "new-password"
+            }
             minLength={8}
             required
           />
+
+          {!isLogin && (
+            <>
+              <label htmlFor="confirmPassword">
+                Confirm password
+              </label>
+
+              <input
+                id="confirmPassword"
+                type="password"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(event) =>
+                  setConfirmPassword(event.target.value)
+                }
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+            </>
+          )}
+
+          {authError && (
+            <p className="auth-error" role="alert">
+              {authError}
+            </p>
+          )}
 
           {isLogin && (
             <button
               className="forgot-link"
               type="button"
               onClick={() =>
-                alert("Password recovery will be added later.")
+                setAuthError(
+                  "Password recovery has not been set up yet."
+                )
               }
             >
               Forgot password?
@@ -203,10 +284,7 @@ export default function App() {
               : "Already have an account?"}
           </span>
 
-          <button
-            type="button"
-            onClick={() => setIsLogin((previous) => !previous)}
-          >
+          <button type="button" onClick={switchAuthMode}>
             {isLogin ? "Sign up" : "Log in"}
           </button>
         </div>
