@@ -87,6 +87,7 @@ body {
 .empty-state h2 {
   margin: 0;
   font-size: 20px;
+  color: #20243a
 }
 
 .message {
