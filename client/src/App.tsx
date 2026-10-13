@@ -1,33 +1,82 @@
 
-import { useEffect, useState } from "react";
-import { io } from "socket.io-client";
+import { useState } from "react";
+import "./App.css";
 
-const socket = io("http://localhost:3000", {
-  autoConnect: false,
-});
+type Message = {
+  id: number;
+  sender: string;
+  text: string;
+};
 
 export default function App() {
-  const [status, setStatus] = useState("Disconnected");
+  const [username, setUsername] = useState("");
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
 
-  useEffect(() => {
-    const onConnect = () => setStatus("Connected");
-    const onDisconnect = () => setStatus("Disconnected");
+  function sendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-    socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-    socket.connect();
+    if (!message.trim() || !username.trim()) return;
 
-    return () => {
-      socket.off("connect", onConnect);
-      socket.off("disconnect", onDisconnect);
-      socket.disconnect();
-    };
-  }, []);
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: Date.now(),
+        sender: username.trim(),
+        text: message.trim(),
+      },
+    ]);
+
+    setMessage("");
+  }
 
   return (
-    <main style={{ padding: 40, fontFamily: "sans-serif" }}>
-      <h1>ChatApp</h1>
-      <p>Socket status: {status}</p>
+    <main className="chat-app">
+      <header className="chat-header">
+        <div className="logo">C</div>
+        <div>
+          <h1>Yapper</h1>
+          <p>Your place to Yap.</p>
+        </div>
+        <span className="status">● Online</span>
+      </header>
+
+      <section className="chat-body">
+        {messages.length === 0 ? (
+          <div className="empty-state">
+            <div className="chat-icon">✉</div>
+            <h2>Welcome to Yapper</h2>
+            <p>Your conversation starts here.</p>
+          </div>
+        ) : (
+          messages.map((item) => (
+            <article className="message" key={item.id}>
+              <strong>{item.sender}</strong>
+              <p>{item.text}</p>
+            </article>
+          ))
+        )}
+      </section>
+
+      <form className="chat-form" onSubmit={sendMessage}>
+        <input
+          aria-label="Your username"
+          placeholder="Your name"
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          required
+        />
+
+        <input
+          aria-label="Message"
+          placeholder="Write a message..."
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          required
+        />
+
+        <button type="submit">Send ↑</button>
+      </form>
     </main>
   );
 }
