@@ -53,7 +53,7 @@ io.on("connection", (socket) => {
  
   // Join a chat room
   socket.on("join-room", (roomId: string) => {
-    if (typeof roomId !== "string" || !roomId.trim()) {
+    if (roomId !== "general") {
       return;
     }
  
@@ -63,25 +63,25 @@ io.on("connection", (socket) => {
     });
   });
  
-  // Send a message to everyone in the room
+  // Broadcast each message to the other users in the shared room.
   socket.on(
     "send-message",
     (data: { roomId?: string; message?: string; username?: string }) => {
       if (
-        typeof data?.roomId !== "string" ||
+        data?.roomId !== "general" ||
         typeof data?.message !== "string" ||
-        !data.roomId.trim() ||
-        !data.message.trim()
+        !data.message.trim() ||
+        data.message.trim().length > 2000 ||
+        typeof data.username !== "string" ||
+        !/^[a-zA-Z0-9_]{3,20}$/.test(data.username.trim())
       ) {
         return;
       }
  
-      io.to(data.roomId).emit("receive-message", {
+      socket.to(data.roomId).emit("receive-message", {
+        id: Date.now() + Math.random(),
         message: data.message.trim(),
-        username:
-          typeof data.username === "string" && data.username.trim()
-            ? data.username.trim()
-            : "User",
+        username: data.username.trim(),
         timestamp: new Date().toISOString(),
       });
     }

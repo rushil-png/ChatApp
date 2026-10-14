@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { io } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import "./App.css";
 
 type Message = {
   id: number;
   text: string;
   sender: "me" | "other";
+  username: string;
 };
 
 const API_URL =
@@ -41,9 +44,67 @@ export default function App() {
 
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const [chatTitle, setChatTitle] = useState("General chat");
+  const [chatConnected, setChatConnected] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
   const isGuestSignup =
     !isLogin && !isForgotPassword && !isResetPassword && !email.trim();
+
+  useEffect(() => {
+    if (!showChat) return;
+
+    const socket = io(API_URL, { withCredentials: true });
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      setChatConnected(true);
+      socket.emit("join-room", "general");
+    });
+    socket.on("disconnect", () => setChatConnected(false));
+    socket.on("connect_error", () => setChatConnected(false));
+    socket.on(
+      "receive-message",
+      (data: {
+        id?: unknown;
+        message?: unknown;
+        username?: unknown;
+      }) => {
+        if (
+          typeof data.message !== "string" ||
+          typeof data.username !== "string"
+        ) {
+          return;
+        }
+
+        const receivedMessage = data.message;
+        const receivedUsername = data.username;
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: typeof data.id === "number" ? data.id : Date.now(),
+            text: receivedMessage,
+            username: receivedUsername,
+            sender: "other",
+          },
+        ]);
+      }
+    );
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+      setChatConnected(false);
+    };
+  }, [showChat, username]);
+
+  useEffect(() => {
+    messageListRef.current?.scrollTo({
+      top: messageListRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages]);
 
   useEffect(() => {
     let active = true;
@@ -332,11 +393,16 @@ export default function App() {
     event.preventDefault();
 
     const text = message.trim();
-    if (!text) return;
+    if (!text || !socketRef.current?.connected) return;
 
+    socketRef.current.emit("send-message", {
+      roomId: "general",
+      message: text,
+      username,
+    });
     setMessages((previous) => [
       ...previous,
-      { id: Date.now(), text, sender: "me" },
+      { id: Date.now(), text, sender: "me", username },
     ]);
 
     setMessage("");
@@ -461,12 +527,12 @@ export default function App() {
               </div>
 
               <span className="online-indicator">
-                <span />
-                Demo mode
+                <span className={chatConnected ? "connected" : ""} />
+                {chatConnected ? "Live chat" : "Connecting..."}
               </span>
             </div>
 
-            <div className="message-list">
+            <div className="message-list" ref={messageListRef}>
               {messages.length === 0 ? (
                 <div className="empty-chat">
                   <div className="empty-chat-icon">✦</div>
@@ -481,7 +547,12 @@ export default function App() {
                       item.sender === "me" ? "my-message" : ""
                     }`}
                   >
-                    <div className="message-bubble">{item.text}</div>
+                    <div className="message-content">
+                      {item.sender === "other" && (
+                        <span className="message-author">@{item.username}</span>
+                      )}
+                      <div className="message-bubble">{item.text}</div>
+                    </div>
                   </div>
                 ))
               )}
@@ -497,7 +568,10 @@ export default function App() {
                 aria-label="Write a message"
               />
 
-              <button type="submit" disabled={!message.trim()}>
+              <button
+                type="submit"
+                disabled={!message.trim() || !chatConnected}
+              >
                 Send <span>➤</span>
               </button>
             </form>

@@ -382,13 +382,19 @@ border-radius: 50%;
 background: #f0b34c;
 }
 
+.online-indicator span.connected {
+background: #22c55e;
+}
+
 .message-list {
 flex: 1;
 min-height: 300px;
 display: flex;
 flex-direction: column;
-gap: 12px;
+align-items: stretch;
+gap: 8px;
 padding: 24px;
+background: #f7f5f1;
 overflow-y: auto;
 }
 
@@ -424,6 +430,7 @@ line-height: 1.6;
 
 .message-row {
 display: flex;
+width: 100%;
 justify-content: flex-start;
 }
 
@@ -432,21 +439,38 @@ justify-content: flex-end;
 }
 
 .message-bubble {
-max-width: 75%;
-padding: 12px 16px;
-border-radius: 15px 15px 15px 4px;
-background: #f0eef7;
+width: fit-content;
+max-width: 100%;
+padding: 9px 12px;
+border-radius: 8px 16px 16px 16px;
+background: #fff;
 color: #29263e;
 font-size: 14px;
-line-height: 1.5;
-overflow-wrap: anywhere;
+line-height: 1.45;
+overflow-wrap: break-word;
+word-break: normal;
 white-space: pre-wrap;
+box-shadow: 0 1px 1px rgba(30, 25, 20, 0.08);
+}
+
+.message-content {
+width: fit-content;
+max-width: min(75%, 680px);
+min-width: 0;
+}
+
+.message-author {
+display: block;
+margin: 0 0 4px 4px;
+color: #77758a;
+font-size: 11px;
+font-weight: 650;
 }
 
 .my-message .message-bubble {
-border-radius: 15px 15px 4px 15px;
-background: #7657ee;
-color: white;
+border-radius: 16px 8px 16px 16px;
+background: #d9fdd3;
+color: #202c24;
 }
 
 .message-form {
@@ -553,6 +577,10 @@ padding: 16px;
 
 .message-list {
 padding: 16px;
+}
+
+.message-content {
+max-width: min(88%, 680px);
 }
 
 .message-form {
