@@ -17,6 +17,10 @@ const USERNAME_RULES =
 
 export default function App() {
   const [isLogin, setIsLogin] = useState(true);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [isResetPassword, setIsResetPassword] = useState(
+    () => new URLSearchParams(window.location.search).has("resetToken")
+  );
   const [showChat, setShowChat] = useState(false);
 
   const [username, setUsername] = useState("");
@@ -39,6 +43,12 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+
+    if (new URLSearchParams(window.location.search).has("resetToken")) {
+      return () => {
+        active = false;
+      };
+    }
 
     fetch(`${API_URL}/api/auth/me`, {
       credentials: "include",
@@ -67,6 +77,71 @@ export default function App() {
     event.preventDefault();
     setAuthError("");
     setAuthNotice("");
+
+    if (isForgotPassword) {
+      setIsSubmitting(true);
+      try {
+        const response = await fetch(`${API_URL}/api/auth/forgot-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setAuthError(data.error ?? "Couldn't request a password reset.");
+          return;
+        }
+
+        setAuthNotice(data.message);
+      } catch {
+        setAuthError(
+          "Could not connect to the server. Make sure your backend is running."
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    if (isResetPassword) {
+      if (password !== confirmPassword) {
+        setAuthError("Your passwords do not match.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const response = await fetch(`${API_URL}/api/auth/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: new URLSearchParams(window.location.search).get("resetToken"),
+            password,
+            confirmPassword,
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setAuthError(data.error ?? "Couldn't reset your password.");
+          return;
+        }
+
+        window.history.replaceState({}, "", window.location.pathname);
+        setIsResetPassword(false);
+        setPassword("");
+        setConfirmPassword("");
+        setAuthNotice(data.message);
+      } catch {
+        setAuthError(
+          "Could not connect to the server. Make sure your backend is running."
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
 
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedUsername = username.trim();
@@ -163,6 +238,8 @@ export default function App() {
 
   function switchAuthMode() {
     setIsLogin((previous) => !previous);
+    setIsForgotPassword(false);
+    setIsResetPassword(false);
     setUsername("");
     setPassword("");
     setConfirmPassword("");
@@ -295,6 +372,24 @@ export default function App() {
               </button>
             )}
 
+            {isResetPassword && (
+              <button
+                className="forgot-link back-link"
+                type="button"
+                onClick={() => {
+                  window.history.replaceState({}, "", window.location.pathname);
+                  setIsResetPassword(false);
+                  setIsForgotPassword(true);
+                  setPassword("");
+                  setConfirmPassword("");
+                  setAuthError("");
+                  setAuthNotice("");
+                }}
+              >
+                Request a new reset link
+              </button>
+            )}
+
             <button className="logout-button" onClick={logout}>
               Log out
             </button>
@@ -390,16 +485,28 @@ export default function App() {
         </div>
 
         <div className="auth-heading">
-          <h1>{isLogin ? "Welcome back" : "Create your account"}</h1>
+          <h1>
+            {isForgotPassword
+              ? "Forgot password?"
+              : isResetPassword
+                ? "Choose a new password"
+                : isLogin
+                  ? "Welcome back"
+                  : "Create your account"}
+          </h1>
           <p>
-            {isLogin
-              ? "Log in to continue your conversations."
-              : "Join Orbit and start connecting."}
+            {isForgotPassword
+              ? "Enter your email and we'll send you a password reset link."
+              : isResetPassword
+                ? "Choose a new password for your Orbit account."
+                : isLogin
+                  ? "Log in to continue your conversations."
+                  : "Join Orbit and start connecting."}
           </p>
         </div>
 
         <form onSubmit={handleSubmit}>
-          {!isLogin && (
+          {!isLogin && !isForgotPassword && !isResetPassword && (
             <>
               <label htmlFor="username">Username</label>
               <input
@@ -418,32 +525,48 @@ export default function App() {
             </>
           )}
 
-          <label htmlFor="email">Email address</label>
-          <input
-            id="email"
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-            maxLength={254}
-            required
-          />
+          {!isResetPassword && (
+            <>
+              <label htmlFor="email">Email address</label>
+              <input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                maxLength={254}
+                required
+              />
+            </>
+          )}
 
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            placeholder="Enter your password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={isLogin ? "current-password" : "new-password"}
-            minLength={8}
-            maxLength={72}
-            required
-          />
+          {!isForgotPassword && (
+            <>
+              <label htmlFor="password">
+                {isResetPassword ? "New password" : "Password"}
+              </label>
+              <input
+                id="password"
+                type="password"
+                placeholder={
+                  isResetPassword ? "Enter a new password" : "Enter your password"
+                }
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={
+                  isLogin && !isResetPassword
+                    ? "current-password"
+                    : "new-password"
+                }
+                minLength={8}
+                maxLength={72}
+                required
+              />
+            </>
+          )}
 
-          {!isLogin && (
+          {(!isLogin || isResetPassword) && !isForgotPassword && (
             <>
               <label htmlFor="confirmPassword">Confirm password</label>
               <input
@@ -472,15 +595,33 @@ export default function App() {
             </p>
           )}
 
-          {isLogin && (
+          {isLogin && !isForgotPassword && !isResetPassword && (
             <button
               className="forgot-link"
               type="button"
-              onClick={() =>
-                setAuthError("Password recovery has not been set up yet.")
-              }
+              onClick={() => {
+                setIsForgotPassword(true);
+                setAuthError("");
+                setAuthNotice("");
+                setPassword("");
+                setConfirmPassword("");
+              }}
             >
               Forgot password?
+            </button>
+          )}
+
+          {isForgotPassword && (
+            <button
+              className="forgot-link back-link"
+              type="button"
+              onClick={() => {
+                setIsForgotPassword(false);
+                setAuthError("");
+                setAuthNotice("");
+              }}
+            >
+              Back to log in
             </button>
           )}
 
@@ -491,20 +632,26 @@ export default function App() {
           >
             {isSubmitting
               ? "Please wait..."
-              : isLogin
-                ? "Log in"
-                : "Create account"}
+              : isForgotPassword
+                ? "Send reset link"
+                : isResetPassword
+                  ? "Reset password"
+                  : isLogin
+                  ? "Log in"
+                  : "Create account"}
           </button>
         </form>
 
-        <div className="auth-switch">
-          <span>
-            {isLogin ? "Don't have an account?" : "Already have an account?"}
-          </span>
-          <button type="button" onClick={switchAuthMode}>
-            {isLogin ? "Sign up" : "Log in"}
-          </button>
-        </div>
+        {!isForgotPassword && !isResetPassword && (
+          <div className="auth-switch">
+            <span>
+              {isLogin ? "Don't have an account?" : "Already have an account?"}
+            </span>
+            <button type="button" onClick={switchAuthMode}>
+              {isLogin ? "Sign up" : "Log in"}
+            </button>
+          </div>
+        )}
 
         <p className="auth-footer">Orbit · A place to connect and chat.</p>
       </section>

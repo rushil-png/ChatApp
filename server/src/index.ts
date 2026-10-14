@@ -4,14 +4,17 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import authRouter from "./auth";
+import authRouter from "./auth.js";
  
 const app = express();
 const httpServer = createServer(app);
  
 const PORT = Number(process.env.PORT ?? 3000);
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ?? "http://localhost:5173";
+const FRONTEND_URL = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://192.168.1.164:5173",
+];
  
 // Middleware
 app.use(

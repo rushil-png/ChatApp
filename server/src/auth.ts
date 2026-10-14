@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { Router, type Request, type Response } from "express";
+import { Router } from "express";
+import type { Request, Response } from "express";
 import Database from "better-sqlite3";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
@@ -13,13 +14,13 @@ const frontendUrl =
  
 const apiUrl =
   process.env.API_URL ?? "http://localhost:3000";
- 
+
 // Free email sending through a Gmail account (app password required).
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
     user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
+    pass: process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, ""),
   },
 });
  
@@ -47,7 +48,13 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL
   );
- 
+
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -91,6 +98,7 @@ db.exec(`
 const SESSION_COOKIE = "orbit_session";
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_DURATION = 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_DURATION = 60 * 60 * 1000;
  
 type CurrentUser = {
   id: number;
@@ -434,7 +442,165 @@ router.get("/verify", (req, res) => {
     </html>
   `);
 });
- 
+
+// REQUEST PASSWORD RESET
+router.post("/forgot-password", async (req, res) => {
+  const email =
+    typeof req.body?.email === "string"
+      ? req.body.email.trim().toLowerCase()
+      : "";
+
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: "Please enter a valid email address." });
+    return;
+  }
+
+  const user = db.prepare(`
+    SELECT id, username
+    FROM users
+    WHERE email = ? AND verified = 1
+  `).get(email) as { id: number; username: string } | undefined;
+
+  if (!user) {
+    res.json({
+      message: "If a verified account exists for that email, a reset link will be sent.",
+    });
+    return;
+  }
+
+  const resetToken = createToken();
+  const tokenHash = hashToken(resetToken);
+  const expiresAt = Date.now() + PASSWORD_RESET_DURATION;
+
+  const storeToken = db.transaction(() => {
+    db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?")
+      .run(user.id);
+    db.prepare(`
+      INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
+      VALUES (?, ?, ?)
+    `).run(tokenHash, user.id, expiresAt);
+  });
+  storeToken();
+
+  try {
+    const resetUrl = new URL("/", frontendUrl);
+    resetUrl.searchParams.set("resetToken", resetToken);
+
+    await transporter.sendMail({
+      from: `Orbit <${process.env.GMAIL_USER}>`,
+      to: email,
+      subject: "Reset your Orbit password",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
+          <h1>Reset your Orbit password</h1>
+          <p>Hi ${escapeHtml(user.username)},</p>
+          <p>Use the link below to choose a new password. This link expires in one hour and can only be used once.</p>
+          <p>
+            <a href="${escapeHtml(resetUrl.toString())}"
+               style="display:inline-block;padding:12px 20px;background:#5145cd;color:white;text-decoration:none;border-radius:8px">
+              Reset my password
+            </a>
+          </p>
+          <p>If you didn't request this, you can ignore this email.</p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    db.prepare("DELETE FROM password_reset_tokens WHERE token_hash = ?")
+      .run(tokenHash);
+    console.error("Password reset email error:", error);
+    res.status(502).json({
+      error: "We couldn't send the password reset email. Please try again.",
+    });
+    return;
+  }
+
+  res.json({
+    message: "If a verified account exists for that email, a reset link will be sent.",
+  });
+});
+
+// RESET PASSWORD
+router.post("/reset-password", async (req, res) => {
+  const token =
+    typeof req.body?.token === "string" ? req.body.token : "";
+  const password =
+    typeof req.body?.password === "string" ? req.body.password : "";
+  const confirmPassword =
+    typeof req.body?.confirmPassword === "string"
+      ? req.body.confirmPassword
+      : "";
+
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    res.status(400).json({
+      error: "This password reset link is invalid or expired. Request a new one.",
+    });
+    return;
+  }
+
+  if (password.length < 8 || password.length > 72) {
+    res.status(400).json({
+      error: "Password must be between 8 and 72 characters.",
+    });
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    res.status(400).json({ error: "Passwords do not match." });
+    return;
+  }
+
+  const tokenHash = hashToken(token);
+  const existingToken = db.prepare(`
+    SELECT user_id
+    FROM password_reset_tokens
+    WHERE token_hash = ? AND expires_at > ?
+  `).get(tokenHash, Date.now()) as { user_id: number } | undefined;
+
+  if (!existingToken) {
+    res.status(400).json({
+      error: "This password reset link is invalid or expired. Request a new one.",
+    });
+    return;
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const applyPasswordReset = db.transaction(() => {
+      const currentToken = db.prepare(`
+        SELECT user_id
+        FROM password_reset_tokens
+        WHERE token_hash = ? AND expires_at > ?
+      `).get(tokenHash, Date.now()) as { user_id: number } | undefined;
+
+      if (!currentToken) return false;
+
+      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+        .run(passwordHash, currentToken.user_id);
+      db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?")
+        .run(currentToken.user_id);
+      db.prepare("DELETE FROM sessions WHERE user_id = ?")
+        .run(currentToken.user_id);
+
+      return true;
+    });
+
+    if (!applyPasswordReset()) {
+      res.status(400).json({
+        error: "This password reset link is invalid or expired. Request a new one.",
+      });
+      return;
+    }
+
+    res.json({ message: "Your password has been reset. You can now log in." });
+  } catch (error) {
+    console.error("Password reset error:", error);
+    res.status(500).json({
+      error: "We couldn't reset your password. Please try again.",
+    });
+  }
+});
+
 // LOGIN
 router.post("/login", async (req, res) => {
   try {

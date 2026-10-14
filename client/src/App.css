@@ -148,6 +148,10 @@ font-weight: 650;
 text-decoration: underline;
 }
 
+.back-link {
+align-self: flex-start;
+}
+
 .submit-button {
 width: 100%;
 padding: 15px;
