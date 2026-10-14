@@ -302,7 +302,9 @@ padding: 22px 16px;
 
 .chat-sidebar h2 {
 margin: 0 0 20px 6px;
-font-size: 18px;
+font-size: 19px;
+font-weight: 750;
+color: #171425;
 }
 
 .conversation {
@@ -329,13 +331,13 @@ font-size: 13px;
 }
 
 .conversation small {
-color: #77758a;
+color: #514b61;
 font-size: 11px;
 }
 
 .sidebar-note {
 margin: 20px 6px;
-color: #9693a6;
+color: #625e70;
 font-size: 12px;
 line-height: 1.6;
 }
@@ -345,6 +347,11 @@ min-height: 540px;
 display: flex;
 flex-direction: column;
 overflow: hidden;
+}
+
+.chat-room h2,
+.empty-chat h3 {
+color: #202033;
 }
 
 .room-header {
@@ -363,7 +370,7 @@ font-size: 17px;
 
 .room-header p {
 margin: 0;
-color: #88859a;
+color: #625e70;
 font-size: 12px;
 }
 
@@ -371,7 +378,7 @@ font-size: 12px;
 display: flex;
 align-items: center;
 gap: 7px;
-color: #77758a;
+color: #625e70;
 font-size: 11px;
 }
 
@@ -394,7 +401,7 @@ flex-direction: column;
 align-items: stretch;
 gap: 8px;
 padding: 24px;
-background: #f7f5f1;
+background: #fff;
 overflow-y: auto;
 }
 
@@ -423,7 +430,7 @@ font-size: 18px;
 
 .empty-chat p {
 margin: 0;
-color: #88859a;
+color: #625e70;
 font-size: 13px;
 line-height: 1.6;
 }
@@ -443,10 +450,11 @@ width: fit-content;
 max-width: 100%;
 padding: 9px 12px;
 border-radius: 8px 16px 16px 16px;
-background: #fff;
-color: #29263e;
+background: #f0eef7;
+color: #171425;
 font-size: 14px;
 line-height: 1.45;
+text-align: left;
 overflow-wrap: break-word;
 word-break: normal;
 white-space: pre-wrap;
@@ -454,23 +462,35 @@ box-shadow: 0 1px 1px rgba(30, 25, 20, 0.08);
 }
 
 .message-content {
+display: flex;
+flex-direction: column;
+align-items: flex-start;
 width: fit-content;
 max-width: min(75%, 680px);
 min-width: 0;
+text-align: left;
 }
 
 .message-author {
+align-self: flex-start;
 display: block;
+width: 100%;
 margin: 0 0 4px 4px;
-color: #77758a;
+color: #514b61;
 font-size: 11px;
 font-weight: 650;
+text-align: left;
+}
+
+.chat-room .message-bubble {
+align-self: flex-start;
+text-align: left;
 }
 
 .my-message .message-bubble {
 border-radius: 16px 8px 16px 16px;
-background: #d9fdd3;
-color: #202c24;
+background: #7657ee;
+color: #fff;
 }
 
 .message-form {
