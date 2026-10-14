@@ -152,6 +152,14 @@ text-decoration: underline;
 align-self: flex-start;
 }
 
+.guest-notice {
+margin: 0 0 20px;
+color: #77758a;
+font-size: 13px;
+line-height: 1.6;
+text-align: left;
+}
+
 .submit-button {
 width: 100%;
 padding: 15px;

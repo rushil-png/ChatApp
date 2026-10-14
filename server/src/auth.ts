@@ -60,6 +60,13 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS guest_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    expires_at INTEGER NOT NULL
+  );
 `);
  
 // Migration for existing databases.
@@ -102,8 +109,9 @@ const PASSWORD_RESET_DURATION = 60 * 60 * 1000;
  
 type CurrentUser = {
   id: number;
-  email: string;
+  email: string | null;
   username: string;
+  guest: boolean;
 };
  
 function hashToken(token: string) {
@@ -178,14 +186,34 @@ function getCurrentUser(req: Request): CurrentUser | null {
       }
     | undefined;
  
-  if (!session || session.verified !== 1) {
+  if (session?.verified === 1) {
+    return {
+      id: session.id,
+      email: session.email,
+      username: session.username,
+      guest: false,
+    };
+  }
+
+  const guestSession = db.prepare(`
+    SELECT id, username
+    FROM guest_sessions
+    WHERE token_hash = ? AND expires_at > ?
+  `).get(hashToken(token), Date.now()) as
+    | { id: number; username: string }
+    | undefined;
+
+  if (!guestSession) {
+    db.prepare("DELETE FROM guest_sessions WHERE token_hash = ?")
+      .run(hashToken(token));
     return null;
   }
- 
+
   return {
-    id: session.id,
-    email: session.email,
-    username: session.username,
+    id: guestSession.id,
+    email: null,
+    username: guestSession.username,
+    guest: true,
   };
 }
  
@@ -207,7 +235,71 @@ function escapeHtml(value: string) {
     return replacements[character] ?? character;
   });
 }
- 
+
+// CREATE ONE-TIME GUEST SESSION
+router.post("/guest", (req, res) => {
+  const username =
+    typeof req.body?.username === "string"
+      ? req.body.username.trim()
+      : "";
+
+  if (!isValidUsername(username)) {
+    res.status(400).json({
+      error:
+        "Username must be 3–20 characters and contain only letters, numbers, and underscores.",
+    });
+    return;
+  }
+
+  const sessionToken = createToken();
+  const tokenHash = hashToken(sessionToken);
+  const now = Date.now();
+
+  try {
+    const createGuestSession = db.transaction(() => {
+      db.prepare("DELETE FROM guest_sessions WHERE expires_at <= ?").run(now);
+
+      const existingAccount = db.prepare(`
+        SELECT id FROM users WHERE username = ? COLLATE NOCASE
+      `).get(username);
+
+      const existingGuest = db.prepare(`
+        SELECT id FROM guest_sessions WHERE username = ? COLLATE NOCASE
+      `).get(username);
+
+      if (existingAccount || existingGuest) return false;
+
+      db.prepare(`
+        INSERT INTO guest_sessions (token_hash, username, expires_at)
+        VALUES (?, ?, ?)
+      `).run(tokenHash, username, now + SESSION_DURATION);
+
+      return true;
+    });
+
+    if (!createGuestSession()) {
+      res.status(409).json({
+        error: "That username is already taken. Please choose another.",
+      });
+      return;
+    }
+
+    setSessionCookie(res, sessionToken);
+    res.status(201).json({
+      user: {
+        username,
+        email: null,
+        guest: true,
+      },
+    });
+  } catch (error) {
+    console.error("Guest session creation error:", error);
+    res.status(500).json({
+      error: "Couldn't start a guest session. Please try again.",
+    });
+  }
+});
+
 // REGISTER
 router.post("/register", async (req, res) => {
   let userId: number | undefined;
@@ -281,8 +373,14 @@ router.post("/register", async (req, res) => {
     const existingUsername = db.prepare(
       "SELECT id FROM users WHERE username = ? COLLATE NOCASE"
     ).get(username);
- 
-    if (existingUsername) {
+
+    db.prepare("DELETE FROM guest_sessions WHERE expires_at <= ?")
+      .run(Date.now());
+    const existingGuestUsername = db.prepare(`
+      SELECT id FROM guest_sessions WHERE username = ? COLLATE NOCASE
+    `).get(username);
+
+    if (existingUsername || existingGuestUsername) {
       res.status(409).json({
         error: "That username is already taken. Please choose another.",
       });
@@ -369,7 +467,8 @@ router.post("/register", async (req, res) => {
  
     if (
       error instanceof Error &&
-      error.message.includes("users.username")
+      (error.message.includes("users.username") ||
+        error.message.includes("guest_sessions.username"))
     ) {
       res.status(409).json({
         error: "That username is already taken. Please choose another.",
@@ -711,22 +810,53 @@ router.patch("/username", (req, res) => {
     return;
   }
  
-  const existingUsername = db.prepare(`
-    SELECT id FROM users
-    WHERE username = ? COLLATE NOCASE AND id != ?
-  `).get(username, user.id);
- 
-  if (existingUsername) {
-    res.status(409).json({
-      error: "That username is already taken. Please choose another.",
-    });
-    return;
-  }
- 
   try {
-    db.prepare("UPDATE users SET username = ? WHERE id = ?")
-      .run(username, user.id);
- 
+    const updateUsername = db.transaction(() => {
+      const now = Date.now();
+      db.prepare("DELETE FROM guest_sessions WHERE expires_at <= ?")
+        .run(now);
+
+      const existingAccount = db.prepare(`
+        SELECT id FROM users
+        WHERE username = ? COLLATE NOCASE
+          AND (? = 1 OR id != ?)
+      `).get(username, user.guest ? 1 : 0, user.id);
+
+      const existingGuest = db.prepare(`
+        SELECT id FROM guest_sessions
+        WHERE username = ? COLLATE NOCASE
+          AND (? = 0 OR id != ?)
+      `).get(username, user.guest ? 1 : 0, user.id);
+
+      if (existingAccount || existingGuest) return "taken" as const;
+
+      const result = user.guest
+        ? db.prepare(`
+            UPDATE guest_sessions SET username = ?
+            WHERE id = ? AND expires_at > ?
+          `).run(username, user.id, now)
+        : db.prepare("UPDATE users SET username = ? WHERE id = ?")
+            .run(username, user.id);
+
+      return result.changes === 1 ? "updated" as const : "expired" as const;
+    });
+
+    const result = updateUsername();
+
+    if (result === "taken") {
+      res.status(409).json({
+        error: "That username is already taken. Please choose another.",
+      });
+      return;
+    }
+
+    if (result === "expired") {
+      res.status(401).json({
+        error: "Your guest session has expired. Start a new session to continue.",
+      });
+      return;
+    }
+
     res.json({
       message: "Username updated successfully.",
       user: {
@@ -739,7 +869,8 @@ router.patch("/username", (req, res) => {
  
     if (
       error instanceof Error &&
-      error.message.includes("users.username")
+      (error.message.includes("users.username") ||
+        error.message.includes("guest_sessions.username"))
     ) {
       res.status(409).json({
         error: "That username is already taken. Please choose another.",
@@ -758,8 +889,11 @@ router.post("/logout", (req, res) => {
   const token = getCookie(req.headers.cookie, SESSION_COOKIE);
  
   if (token && /^[a-f0-9]{64}$/.test(token)) {
+    const tokenHash = hashToken(token);
     db.prepare("DELETE FROM sessions WHERE token_hash = ?")
-      .run(hashToken(token));
+      .run(tokenHash);
+    db.prepare("DELETE FROM guest_sessions WHERE token_hash = ?")
+      .run(tokenHash);
   }
  
   clearSessionCookie(res);

@@ -9,7 +9,8 @@ type Message = {
 };
 
 const API_URL =
-  import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+  import.meta.env.VITE_API_URL ??
+  `${window.location.protocol}//${window.location.hostname}:3000`;
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
 const USERNAME_RULES =
@@ -21,6 +22,7 @@ export default function App() {
   const [isResetPassword, setIsResetPassword] = useState(
     () => new URLSearchParams(window.location.search).has("resetToken")
   );
+  const [isGuestSession, setIsGuestSession] = useState(false);
   const [showChat, setShowChat] = useState(false);
 
   const [username, setUsername] = useState("");
@@ -40,6 +42,8 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatTitle, setChatTitle] = useState("General chat");
+  const isGuestSignup =
+    !isLogin && !isForgotPassword && !isResetPassword && !email.trim();
 
   useEffect(() => {
     let active = true;
@@ -58,9 +62,10 @@ export default function App() {
         return response.json();
       })
       .then((data) => {
-        if (active && data?.user?.email) {
-          setEmail(data.user.email);
+        if (active && data?.user?.username) {
+          setEmail(data.user.email ?? "");
           setUsername(data.user.username ?? "");
+          setIsGuestSession(data.user.guest === true);
           setShowChat(true);
         }
       })
@@ -151,12 +156,12 @@ export default function App() {
       return;
     }
 
-    if (!isLogin && password !== confirmPassword) {
+    if (!isLogin && !isGuestSignup && password !== confirmPassword) {
       setAuthError("Your passwords do not match.");
       return;
     }
 
-    if (password.length < 8) {
+    if (!isGuestSignup && password.length < 8) {
       setAuthError("Your password must be at least 8 characters.");
       return;
     }
@@ -164,18 +169,26 @@ export default function App() {
     setIsSubmitting(true);
 
     try {
-      const endpoint = isLogin ? "login" : "register";
+      const endpoint = isLogin
+        ? "login"
+        : isGuestSignup
+          ? "guest"
+          : "register";
 
       const response = await fetch(`${API_URL}/api/auth/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          username: trimmedUsername,
-          email: normalizedEmail,
-          password,
-          confirmPassword,
-        }),
+        body: JSON.stringify(
+          isGuestSignup
+            ? { username: trimmedUsername }
+            : {
+                username: trimmedUsername,
+                email: normalizedEmail,
+                password,
+                confirmPassword,
+              }
+        ),
       });
 
       const data = await response.json();
@@ -187,12 +200,23 @@ export default function App() {
         return;
       }
 
+      if (isGuestSignup) {
+        setEmail("");
+        setUsername(data.user.username);
+        setPassword("");
+        setConfirmPassword("");
+        setIsGuestSession(true);
+        setShowChat(true);
+        return;
+      }
+
       if (!isLogin) {
         setEmail(normalizedEmail);
         setUsername("");
         setPassword("");
         setConfirmPassword("");
         setIsLogin(true);
+        setIsGuestSession(false);
         setAuthNotice(
           data.message ??
             "Check your email for your verification link."
@@ -202,6 +226,7 @@ export default function App() {
 
       setEmail(data.user.email);
       setUsername(data.user.username ?? "");
+      setIsGuestSession(false);
       setPassword("");
       setConfirmPassword("");
       setShowChat(true);
@@ -225,6 +250,7 @@ export default function App() {
     }
 
     setShowChat(false);
+    setIsGuestSession(false);
     setUsername("");
     setPassword("");
     setConfirmPassword("");
@@ -358,7 +384,12 @@ export default function App() {
             ) : (
               <span className="user-identity">
                 <strong className="user-name">@{username}</strong>
-                <span className="user-email">{email}</span>
+                <span className="user-email">
+                  {email ||
+                    (isGuestSession
+                      ? "One-time guest · ends at logout or in 7 days"
+                      : "")}
+                </span>
               </span>
             )}
 
@@ -501,7 +532,9 @@ export default function App() {
                 ? "Choose a new password for your Orbit account."
                 : isLogin
                   ? "Log in to continue your conversations."
-                  : "Join Orbit and start connecting."}
+                  : isGuestSignup
+                    ? "Leave email blank to start a one-time guest session."
+                    : "Join Orbit and start connecting."}
           </p>
         </div>
 
@@ -527,7 +560,9 @@ export default function App() {
 
           {!isResetPassword && (
             <>
-              <label htmlFor="email">Email address</label>
+              <label htmlFor="email">
+                Email address{!isLogin && !isForgotPassword ? " (optional)" : ""}
+              </label>
               <input
                 id="email"
                 type="email"
@@ -536,12 +571,12 @@ export default function App() {
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
                 maxLength={254}
-                required
+                required={!isGuestSignup && (isLogin || isForgotPassword)}
               />
             </>
           )}
 
-          {!isForgotPassword && (
+          {!isForgotPassword && !isGuestSignup && (
             <>
               <label htmlFor="password">
                 {isResetPassword ? "New password" : "Password"}
@@ -566,7 +601,9 @@ export default function App() {
             </>
           )}
 
-          {(!isLogin || isResetPassword) && !isForgotPassword && (
+          {(!isLogin || isResetPassword) &&
+            !isForgotPassword &&
+            !isGuestSignup && (
             <>
               <label htmlFor="confirmPassword">Confirm password</label>
               <input
@@ -581,6 +618,13 @@ export default function App() {
                 required
               />
             </>
+            )}
+
+          {isGuestSignup && (
+            <p className="guest-notice">
+              Without an email, this is a one-time guest session. It ends when
+              you log out or after 7 days, and it cannot be recovered.
+            </p>
           )}
 
           {authError && (
@@ -636,9 +680,11 @@ export default function App() {
                 ? "Send reset link"
                 : isResetPassword
                   ? "Reset password"
-                  : isLogin
-                  ? "Log in"
-                  : "Create account"}
+                    : isGuestSignup
+                      ? "Continue as guest"
+                      : isLogin
+                        ? "Log in"
+                        : "Create account"}
           </button>
         </form>
 
