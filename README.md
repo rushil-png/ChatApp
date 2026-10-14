@@ -9,3 +9,5 @@ guest sessions have no password and cannot be recovered.
 
 General chat uses Socket.IO to deliver messages live to other connected users.
 Messages are not saved, so users must be online in the chat at the same time.
+Each active login session gets a balanced pastel color for other users' message
+bubbles; the color stays with that session until logout or expiry.

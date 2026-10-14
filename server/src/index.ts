@@ -4,7 +4,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import authRouter from "./auth.js";
+import authRouter, { getChatIdentity } from "./auth.js";
  
 const app = express();
 const httpServer = createServer(app);
@@ -46,7 +46,19 @@ const io = new Server(httpServer, {
     methods: ["GET", "POST"],
   },
 });
- 
+
+io.use((socket, next) => {
+  const identity = getChatIdentity(socket.request.headers.cookie);
+
+  if (!identity) {
+    next(new Error("Authentication required"));
+    return;
+  }
+
+  socket.data.chatIdentity = identity;
+  next();
+});
+
 // Chat connections
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
@@ -66,22 +78,27 @@ io.on("connection", (socket) => {
   // Broadcast each message to the other users in the shared room.
   socket.on(
     "send-message",
-    (data: { roomId?: string; message?: string; username?: string }) => {
+    (data: { roomId?: string; message?: string }) => {
       if (
         data?.roomId !== "general" ||
+        !socket.rooms.has("general") ||
         typeof data?.message !== "string" ||
         !data.message.trim() ||
-        data.message.trim().length > 2000 ||
-        typeof data.username !== "string" ||
-        !/^[a-zA-Z0-9_]{3,20}$/.test(data.username.trim())
+        data.message.trim().length > 2000
       ) {
         return;
       }
- 
+
+      const identity = socket.data.chatIdentity as {
+        username: string;
+        color: string;
+      };
+
       socket.to(data.roomId).emit("receive-message", {
         id: Date.now() + Math.random(),
         message: data.message.trim(),
-        username: data.username.trim(),
+        username: identity.username,
+        color: identity.color,
         timestamp: new Date().toISOString(),
       });
     }

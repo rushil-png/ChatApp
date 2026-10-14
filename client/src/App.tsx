@@ -9,6 +9,7 @@ type Message = {
   text: string;
   sender: "me" | "other";
   username: string;
+  color?: string;
 };
 
 const API_URL =
@@ -67,18 +68,21 @@ export default function App() {
       "receive-message",
       (data: {
         id?: unknown;
+        color?: unknown;
         message?: unknown;
         username?: unknown;
       }) => {
         if (
           typeof data.message !== "string" ||
-          typeof data.username !== "string"
+          typeof data.username !== "string" ||
+          typeof data.color !== "string"
         ) {
           return;
         }
 
         const receivedMessage = data.message;
         const receivedUsername = data.username;
+        const receivedColor = data.color;
 
         setMessages((previous) => [
           ...previous,
@@ -86,6 +90,7 @@ export default function App() {
             id: typeof data.id === "number" ? data.id : Date.now(),
             text: receivedMessage,
             username: receivedUsername,
+            color: receivedColor,
             sender: "other",
           },
         ]);
@@ -398,7 +403,6 @@ export default function App() {
     socketRef.current.emit("send-message", {
       roomId: "general",
       message: text,
-      username,
     });
     setMessages((previous) => [
       ...previous,
@@ -551,7 +555,16 @@ export default function App() {
                       {item.sender === "other" && (
                         <span className="message-author">@{item.username}</span>
                       )}
-                      <div className="message-bubble">{item.text}</div>
+                      <div
+                        className="message-bubble"
+                        style={
+                          item.sender === "other" && item.color
+                            ? { backgroundColor: item.color }
+                            : undefined
+                        }
+                      >
+                        {item.text}
+                      </div>
                     </div>
                   </div>
                 ))

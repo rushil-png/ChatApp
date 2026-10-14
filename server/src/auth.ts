@@ -58,14 +58,16 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    chat_color TEXT
   );
 
   CREATE TABLE IF NOT EXISTS guest_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token_hash TEXT NOT NULL UNIQUE,
     username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    chat_color TEXT
   );
 `);
  
@@ -77,7 +79,17 @@ const columns = db.prepare("PRAGMA table_info(users)").all() as {
 if (!columns.some((column) => column.name === "username")) {
   db.exec("ALTER TABLE users ADD COLUMN username TEXT");
 }
- 
+
+for (const table of ["sessions", "guest_sessions"]) {
+  const sessionColumns = db.prepare(`PRAGMA table_info(${table})`).all() as {
+    name: string;
+  }[];
+
+  if (!sessionColumns.some((column) => column.name === "chat_color")) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN chat_color TEXT`);
+  }
+}
+
 // Give existing accounts a username without deleting their data.
 const existingUsers = db.prepare(`
   SELECT id FROM users
@@ -106,6 +118,21 @@ const SESSION_COOKIE = "orbit_session";
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_DURATION = 24 * 60 * 60 * 1000;
 const PASSWORD_RESET_DURATION = 60 * 60 * 1000;
+const CHAT_COLORS = [
+  "#e8c8c8",
+  "#e8d7b8",
+  "#d9dfb8",
+  "#c5dfd0",
+  "#c5dce8",
+  "#d0c9e8",
+  "#e2c8df",
+  "#d7d2c8",
+] as const;
+
+type ChatIdentity = {
+  username: string;
+  color: string;
+};
  
 type CurrentUser = {
   id: number;
@@ -121,7 +148,87 @@ function hashToken(token: string) {
 function createToken() {
   return randomBytes(32).toString("hex");
 }
- 
+
+function chooseChatColor(now: number) {
+  const usage = db.prepare(`
+    SELECT chat_color, COUNT(*) AS count
+    FROM (
+      SELECT chat_color FROM sessions WHERE expires_at > ?
+      UNION ALL
+      SELECT chat_color FROM guest_sessions WHERE expires_at > ?
+    )
+    WHERE chat_color IS NOT NULL
+    GROUP BY chat_color
+  `).all(now, now) as { chat_color: string; count: number }[];
+  const counts = new Map(
+    usage.map((item) => [item.chat_color, item.count])
+  );
+
+  return CHAT_COLORS.reduce((leastUsed, color) =>
+    (counts.get(color) ?? 0) < (counts.get(leastUsed) ?? 0)
+      ? color
+      : leastUsed
+  );
+}
+
+export function getChatIdentity(
+  cookieHeader: string | undefined
+): ChatIdentity | null {
+  const token = getCookie(cookieHeader, SESSION_COOKIE);
+
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    return null;
+  }
+
+  const tokenHash = hashToken(token);
+  const now = Date.now();
+  const accountSession = db.prepare(`
+    SELECT sessions.token_hash, sessions.chat_color, users.username
+    FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token_hash = ?
+      AND sessions.expires_at > ?
+      AND users.verified = 1
+  `).get(tokenHash, now) as
+    | { token_hash: string; chat_color: string | null; username: string }
+    | undefined;
+
+  if (accountSession) {
+    const color =
+      accountSession.chat_color ?? chooseChatColor(now);
+    if (!accountSession.chat_color) {
+      db.prepare("UPDATE sessions SET chat_color = ? WHERE token_hash = ?")
+        .run(color, tokenHash);
+    }
+
+    return {
+      username: accountSession.username,
+      color,
+    };
+  }
+
+  const guestSession = db.prepare(`
+    SELECT id, username, chat_color
+    FROM guest_sessions
+    WHERE token_hash = ? AND expires_at > ?
+  `).get(tokenHash, now) as
+    | { id: number; username: string; chat_color: string | null }
+    | undefined;
+
+  if (!guestSession) return null;
+
+  const color = guestSession.chat_color ?? chooseChatColor(now);
+  if (!guestSession.chat_color) {
+    db.prepare("UPDATE guest_sessions SET chat_color = ? WHERE id = ?")
+      .run(color, guestSession.id);
+  }
+
+  return {
+    username: guestSession.username,
+    color,
+  };
+}
+
 function getCookie(
   cookieHeader: string | undefined,
   name: string
@@ -269,10 +376,13 @@ router.post("/guest", (req, res) => {
 
       if (existingAccount || existingGuest) return false;
 
+      const chatColor = chooseChatColor(now);
       db.prepare(`
-        INSERT INTO guest_sessions (token_hash, username, expires_at)
-        VALUES (?, ?, ?)
-      `).run(tokenHash, username, now + SESSION_DURATION);
+        INSERT INTO guest_sessions (
+          token_hash, username, expires_at, chat_color
+        )
+        VALUES (?, ?, ?, ?)
+      `).run(tokenHash, username, now + SESSION_DURATION, chatColor);
 
       return true;
     });
@@ -747,14 +857,13 @@ router.post("/login", async (req, res) => {
  
     const sessionToken = createToken();
  
+    const sessionTokenHash = hashToken(sessionToken);
+    const sessionExpiresAt = Date.now() + SESSION_DURATION;
+    const chatColor = chooseChatColor(Date.now());
     db.prepare(`
-      INSERT INTO sessions (token_hash, user_id, expires_at)
-      VALUES (?, ?, ?)
-    `).run(
-      hashToken(sessionToken),
-      user.id,
-      Date.now() + SESSION_DURATION
-    );
+      INSERT INTO sessions (token_hash, user_id, expires_at, chat_color)
+      VALUES (?, ?, ?, ?)
+    `).run(sessionTokenHash, user.id, sessionExpiresAt, chatColor);
  
     setSessionCookie(res, sessionToken);
  
