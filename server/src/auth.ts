@@ -129,9 +129,41 @@ const CHAT_COLORS = [
   "#d7d2c8",
 ] as const;
 
+let revokeChatSessions: (
+  sessionTokenHashes: string[],
+  status: "logged-out"
+) => void = () => {};
+
+export function setChatSessionRevoker(
+  revoke: (sessionTokenHashes: string[], status: "logged-out") => void
+) {
+  revokeChatSessions = revoke;
+}
+
+export function isChatSessionValid(sessionTokenHash: string) {
+  const now = Date.now();
+  const accountSession = db.prepare(`
+    SELECT 1
+    FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token_hash = ?
+      AND sessions.expires_at > ?
+      AND users.verified = 1
+  `).get(sessionTokenHash, now);
+
+  if (accountSession) return true;
+
+  return Boolean(db.prepare(`
+    SELECT 1 FROM guest_sessions
+    WHERE token_hash = ? AND expires_at > ?
+  `).get(sessionTokenHash, now));
+}
+
 type ChatIdentity = {
   username: string;
   color: string;
+  sessionTokenHash: string;
+  expiresAt: number;
 };
  
 type CurrentUser = {
@@ -183,14 +215,19 @@ export function getChatIdentity(
   const tokenHash = hashToken(token);
   const now = Date.now();
   const accountSession = db.prepare(`
-    SELECT sessions.token_hash, sessions.chat_color, users.username
+    SELECT sessions.token_hash, sessions.chat_color, sessions.expires_at, users.username
     FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token_hash = ?
       AND sessions.expires_at > ?
       AND users.verified = 1
   `).get(tokenHash, now) as
-    | { token_hash: string; chat_color: string | null; username: string }
+    | {
+        token_hash: string;
+        chat_color: string | null;
+        expires_at: number;
+        username: string;
+      }
     | undefined;
 
   if (accountSession) {
@@ -204,15 +241,22 @@ export function getChatIdentity(
     return {
       username: accountSession.username,
       color,
+      sessionTokenHash: tokenHash,
+      expiresAt: accountSession.expires_at,
     };
   }
 
   const guestSession = db.prepare(`
-    SELECT id, username, chat_color
+    SELECT id, username, chat_color, expires_at
     FROM guest_sessions
     WHERE token_hash = ? AND expires_at > ?
   `).get(tokenHash, now) as
-    | { id: number; username: string; chat_color: string | null }
+    | {
+        id: number;
+        username: string;
+        chat_color: string | null;
+        expires_at: number;
+      }
     | undefined;
 
   if (!guestSession) return null;
@@ -226,6 +270,8 @@ export function getChatIdentity(
   return {
     username: guestSession.username,
     color,
+    sessionTokenHash: tokenHash,
+    expiresAt: guestSession.expires_at,
   };
 }
 
@@ -782,7 +828,11 @@ router.post("/reset-password", async (req, res) => {
         WHERE token_hash = ? AND expires_at > ?
       `).get(tokenHash, Date.now()) as { user_id: number } | undefined;
 
-      if (!currentToken) return false;
+      if (!currentToken) return null;
+
+      const sessionTokenHashes = db.prepare(`
+        SELECT token_hash FROM sessions WHERE user_id = ?
+      `).all(currentToken.user_id) as { token_hash: string }[];
 
       db.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
         .run(passwordHash, currentToken.user_id);
@@ -791,16 +841,18 @@ router.post("/reset-password", async (req, res) => {
       db.prepare("DELETE FROM sessions WHERE user_id = ?")
         .run(currentToken.user_id);
 
-      return true;
+      return sessionTokenHashes.map((session) => session.token_hash);
     });
 
-    if (!applyPasswordReset()) {
+    const sessionTokenHashes = applyPasswordReset();
+    if (!sessionTokenHashes) {
       res.status(400).json({
         error: "This password reset link is invalid or expired. Request a new one.",
       });
       return;
     }
 
+    revokeChatSessions(sessionTokenHashes, "logged-out");
     res.json({ message: "Your password has been reset. You can now log in." });
   } catch (error) {
     console.error("Password reset error:", error);
@@ -1003,6 +1055,7 @@ router.post("/logout", (req, res) => {
       .run(tokenHash);
     db.prepare("DELETE FROM guest_sessions WHERE token_hash = ?")
       .run(tokenHash);
+    revokeChatSessions([tokenHash], "logged-out");
   }
  
   clearSessionCookie(res);

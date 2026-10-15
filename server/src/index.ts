@@ -5,7 +5,11 @@ import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { randomUUID } from "node:crypto";
-import authRouter, { getChatIdentity } from "./auth.js";
+import authRouter, {
+  getChatIdentity,
+  isChatSessionValid,
+  setChatSessionRevoker,
+} from "./auth.js";
  
 const app = express();
 const httpServer = createServer(app);
@@ -64,6 +68,23 @@ const onlineUsers = new Map<string, OnlineUser>();
 const pendingChatRequests = new Map<string, PendingChatRequest>();
 const privateConversations = new Map<string, Set<string>>();
 
+setChatSessionRevoker((sessionTokenHashes, status) => {
+  const revokedSessions = new Set(sessionTokenHashes);
+
+  for (const socket of io.sockets.sockets.values()) {
+    const identity = socket.data.chatIdentity as
+      | { sessionTokenHash?: string }
+      | undefined;
+    if (
+      identity?.sessionTokenHash &&
+      revokedSessions.has(identity.sessionTokenHash)
+    ) {
+      socket.data.chatDisconnectStatus = status;
+      socket.disconnect(true);
+    }
+  }
+});
+
 io.use((socket, next) => {
   const identity = getChatIdentity(socket.request.headers.cookie);
 
@@ -79,8 +100,19 @@ io.use((socket, next) => {
 // Chat connections
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
-  const identity = socket.data.chatIdentity as OnlineUser;
+  const sessionIdentity = socket.data.chatIdentity as OnlineUser & {
+    sessionTokenHash: string;
+    expiresAt: number;
+  };
+  const identity: OnlineUser = {
+    username: sessionIdentity.username,
+    color: sessionIdentity.color,
+  };
   let offlineHandled = false;
+  const sessionExpiryTimer = setTimeout(
+    () => socket.disconnect(true),
+    Math.max(0, sessionIdentity.expiresAt - Date.now())
+  );
 
   const markOffline = (status: "logged-out" | "disconnected") => {
     onlineUsers.delete(socket.id);
@@ -126,9 +158,11 @@ io.on("connection", (socket) => {
  
   // Join a chat room
   socket.on("join-room", (roomId: string) => {
-    if (roomId !== "general") {
+    if (!isChatSessionValid(sessionIdentity.sessionTokenHash)) {
+      socket.disconnect(true);
       return;
     }
+    if (roomId !== "general") return;
  
     socket.join(roomId);
     socket.to(roomId).emit("user-joined", {
@@ -140,6 +174,11 @@ io.on("connection", (socket) => {
   socket.on(
     "send-message",
     (data: { roomId?: string; message?: string }) => {
+      if (!isChatSessionValid(sessionIdentity.sessionTokenHash)) {
+        socket.disconnect(true);
+        return;
+      }
+
       const isAllowedRoom =
         data?.roomId === "general"
           ? socket.rooms.has("general")
@@ -173,6 +212,11 @@ io.on("connection", (socket) => {
   );
 
   socket.on("request-chat", (targetId: unknown) => {
+    if (!isChatSessionValid(sessionIdentity.sessionTokenHash)) {
+      socket.disconnect(true);
+      return;
+    }
+
     if (
       typeof targetId !== "string" ||
       targetId === socket.id ||
@@ -228,6 +272,12 @@ io.on("connection", (socket) => {
   socket.on(
     "respond-chat-request",
     (data: { requestId?: unknown; accept?: unknown }) => {
+      if (
+        !isChatSessionValid(sessionIdentity.sessionTokenHash)
+      ) {
+        socket.disconnect(true);
+        return;
+      }
       if (
         typeof data?.requestId !== "string" ||
         typeof data.accept !== "boolean"
@@ -318,8 +368,13 @@ io.on("connection", (socket) => {
 
   // Handle disconnections
   socket.on("disconnect", () => {
+    clearTimeout(sessionExpiryTimer);
     if (!offlineHandled) {
-      markOffline("disconnected");
+      const status =
+        socket.data.chatDisconnectStatus === "logged-out"
+          ? "logged-out"
+          : "disconnected";
+      markOffline(status);
     }
 
     console.log(`User disconnected: ${socket.id}`);
