@@ -11,3 +11,8 @@ General chat uses Socket.IO to deliver messages live to other connected users.
 Messages are not saved, so users must be online in the chat at the same time.
 Each active login session gets a balanced pastel color for other users' message
 bubbles; the color stays with that session until logout or expiry.
+
+The sidebar lists currently connected sessions. Select Request to invite
+someone to a one-to-one chat; they can accept or decline, and accepted chats
+appear under Private chats. Presence, requests, and private conversations are
+live-only and reset when a participant disconnects or the server restarts.

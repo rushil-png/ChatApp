@@ -10,6 +10,25 @@ type Message = {
   sender: "me" | "other";
   username: string;
   color?: string;
+  roomId: string;
+};
+
+type OnlineUser = {
+  id: string;
+  username: string;
+  color: string;
+};
+
+type IncomingChatRequest = {
+  requestId: string;
+  fromId: string;
+  username: string;
+  color: string;
+};
+
+type PrivateChat = {
+  roomId: string;
+  username: string;
 };
 
 const API_URL =
@@ -45,6 +64,16 @@ export default function App() {
 
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<
+    IncomingChatRequest[]
+  >([]);
+  const [privateChats, setPrivateChats] = useState<PrivateChat[]>([]);
+  const [requestStatuses, setRequestStatuses] = useState<
+    Record<string, string>
+  >({});
+  const [selectedRoomId, setSelectedRoomId] = useState("general");
+  const selectedRoomIdRef = useRef("general");
   const messageListRef = useRef<HTMLDivElement>(null);
   const [chatTitle, setChatTitle] = useState("General chat");
   const [chatConnected, setChatConnected] = useState(false);
@@ -62,20 +91,103 @@ export default function App() {
       setChatConnected(true);
       socket.emit("join-room", "general");
     });
-    socket.on("disconnect", () => setChatConnected(false));
+    socket.on("disconnect", () => {
+      setChatConnected(false);
+      setIncomingRequests([]);
+      setPrivateChats([]);
+      setRequestStatuses({});
+      selectedRoomIdRef.current = "general";
+      setSelectedRoomId("general");
+      setChatTitle("General chat");
+    });
     socket.on("connect_error", () => setChatConnected(false));
+    socket.on("online-users", (users: OnlineUser[]) => {
+      setOnlineUsers(users);
+    });
+    socket.on("user-online", (user: OnlineUser) => {
+      setOnlineUsers((previous) => [
+        ...previous.filter((item) => item.id !== user.id),
+        user,
+      ]);
+    });
+    socket.on("user-offline", ({ id }: { id: string }) => {
+      setOnlineUsers((previous) => previous.filter((user) => user.id !== id));
+      setRequestStatuses((previous) => {
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+    });
+    socket.on(
+      "incoming-chat-request",
+      (request: IncomingChatRequest) => {
+        setIncomingRequests((previous) => [
+          ...previous.filter((item) => item.requestId !== request.requestId),
+          request,
+        ]);
+      }
+    );
+    socket.on(
+      "chat-request-result",
+      (result: {
+        status: string;
+        targetId: string;
+        username?: string;
+      }) => {
+        const labels: Record<string, string> = {
+          sent: "Request sent",
+          declined: "Request declined",
+          unavailable: "User is no longer online",
+          pending: "Finish your current request first",
+        };
+        setRequestStatuses((previous) => ({
+          ...previous,
+          [result.targetId]: labels[result.status] ?? "Request failed",
+        }));
+      }
+    );
+    socket.on(
+      "private-chat-started",
+      (chat: PrivateChat) => {
+        setPrivateChats((previous) => [
+          ...previous.filter((item) => item.roomId !== chat.roomId),
+          chat,
+        ]);
+        setIncomingRequests((previous) =>
+          previous.filter((item) => item.username !== chat.username)
+        );
+        setRequestStatuses({});
+        setSelectedRoomId(chat.roomId);
+        setChatTitle(`@${chat.username}`);
+      }
+    );
+    socket.on(
+      "private-chat-ended",
+      ({ roomId }: { roomId: string }) => {
+        setPrivateChats((previous) =>
+          previous.filter((chat) => chat.roomId !== roomId)
+        );
+        if (selectedRoomIdRef.current === roomId) {
+          selectedRoomIdRef.current = "general";
+          setSelectedRoomId("general");
+          setChatTitle("General chat");
+        }
+      }
+    );
     socket.on(
       "receive-message",
       (data: {
         id?: unknown;
         color?: unknown;
         message?: unknown;
+        roomId?: unknown;
         username?: unknown;
       }) => {
         if (
           typeof data.message !== "string" ||
           typeof data.username !== "string" ||
-          typeof data.color !== "string"
+          typeof data.color !== "string" ||
+          typeof data.roomId !== "string"
         ) {
           return;
         }
@@ -83,6 +195,7 @@ export default function App() {
         const receivedMessage = data.message;
         const receivedUsername = data.username;
         const receivedColor = data.color;
+        const receivedRoomId = data.roomId;
 
         setMessages((previous) => [
           ...previous,
@@ -92,6 +205,7 @@ export default function App() {
             username: receivedUsername,
             color: receivedColor,
             sender: "other",
+            roomId: receivedRoomId,
           },
         ]);
       }
@@ -103,6 +217,10 @@ export default function App() {
       setChatConnected(false);
     };
   }, [showChat, username]);
+
+  useEffect(() => {
+    selectedRoomIdRef.current = selectedRoomId;
+  }, [selectedRoomId]);
 
   useEffect(() => {
     messageListRef.current?.scrollTo({
@@ -322,6 +440,13 @@ export default function App() {
     setConfirmPassword("");
     setMessage("");
     setMessages([]);
+    setOnlineUsers([]);
+    setIncomingRequests([]);
+    setPrivateChats([]);
+    setRequestStatuses({});
+    setSelectedRoomId("general");
+    selectedRoomIdRef.current = "general";
+    setChatTitle("General chat");
     setIsEditingUsername(false);
     setUsernameError("");
     setAuthError("");
@@ -401,15 +526,48 @@ export default function App() {
     if (!text || !socketRef.current?.connected) return;
 
     socketRef.current.emit("send-message", {
-      roomId: "general",
+      roomId: selectedRoomId,
       message: text,
     });
     setMessages((previous) => [
       ...previous,
-      { id: Date.now(), text, sender: "me", username },
+      {
+        id: Date.now(),
+        text,
+        sender: "me",
+        username,
+        roomId: selectedRoomId,
+      },
     ]);
 
     setMessage("");
+  }
+
+  function requestChat(targetId: string) {
+    if (!socketRef.current?.connected) return;
+    setRequestStatuses((previous) => ({
+      ...previous,
+      [targetId]: "Sending request...",
+    }));
+    socketRef.current.emit("request-chat", targetId);
+  }
+
+  function respondToChatRequest(requestId: string, accept: boolean) {
+    socketRef.current?.emit("respond-chat-request", {
+      requestId,
+      accept,
+    });
+    if (!accept) {
+      setIncomingRequests((previous) =>
+        previous.filter((request) => request.requestId !== requestId)
+      );
+    }
+  }
+
+  function openConversation(roomId: string, title: string) {
+    selectedRoomIdRef.current = roomId;
+    setSelectedRoomId(roomId);
+    setChatTitle(title);
   }
 
   if (showChat) {
@@ -508,8 +666,10 @@ export default function App() {
             <h2>Messages</h2>
 
             <button
-              className="conversation active"
-              onClick={() => setChatTitle("General chat")}
+              className={`conversation ${
+                selectedRoomId === "general" ? "active" : ""
+              }`}
+              onClick={() => openConversation("general", "General chat")}
             >
               <span className="conversation-avatar">G</span>
               <span>
@@ -518,9 +678,102 @@ export default function App() {
               </span>
             </button>
 
-            <p className="sidebar-note">
-              More conversations can be added later.
-            </p>
+            {privateChats.length > 0 && (
+              <div className="sidebar-section">
+                <h3>Private chats</h3>
+                {privateChats.map((chat) => (
+                  <button
+                    className={`conversation private-conversation ${
+                      selectedRoomId === chat.roomId ? "active" : ""
+                    }`}
+                    key={chat.roomId}
+                    onClick={() =>
+                      openConversation(chat.roomId, `@${chat.username}`)
+                    }
+                  >
+                    <span className="conversation-avatar">↗</span>
+                    <span>
+                      <strong>@{chat.username}</strong>
+                      <small>Private conversation</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="sidebar-section online-section">
+              <h3>Online now <span>{onlineUsers.length}</span></h3>
+              {onlineUsers.length === 0 ? (
+                <p className="sidebar-note">No one else is online yet.</p>
+              ) : (
+                onlineUsers.map((user) => (
+                  <div className="online-user" key={user.id}>
+                    <span
+                      className="online-user-dot"
+                      style={{ backgroundColor: user.color }}
+                    />
+                    <span className="online-user-name">@{user.username}</span>
+                    <button
+                      type="button"
+                      disabled={
+                        !chatConnected ||
+                        requestStatuses[user.id] === "Request sent" ||
+                        requestStatuses[user.id] === "Sending request..."
+                      }
+                      onClick={() => requestChat(user.id)}
+                    >
+                      {requestStatuses[user.id] === "Sending request..."
+                        ? "Sending..."
+                        : requestStatuses[user.id] === "Request sent"
+                          ? "Sent"
+                          : "Request"}
+                    </button>
+                    {requestStatuses[user.id] &&
+                      requestStatuses[user.id] !== "Sending request..." && (
+                        <small className="request-status">
+                          {requestStatuses[user.id]}
+                        </small>
+                      )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {incomingRequests.length > 0 && (
+              <div className="sidebar-section request-section">
+                <h3>Chat requests</h3>
+                {incomingRequests.map((request) => (
+                  <div className="incoming-request" key={request.requestId}>
+                    <span>@{request.username} wants to chat.</span>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          respondToChatRequest(request.requestId, true)
+                        }
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="decline-request"
+                        onClick={() =>
+                          respondToChatRequest(request.requestId, false)
+                        }
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {onlineUsers.length === 0 && privateChats.length === 0 && (
+              <p className="sidebar-note">
+                When others come online, request a private chat here.
+              </p>
+            )}
           </aside>
 
           <section className="chat-room">
@@ -537,14 +790,17 @@ export default function App() {
             </div>
 
             <div className="message-list" ref={messageListRef}>
-              {messages.length === 0 ? (
+              {messages.filter((item) => item.roomId === selectedRoomId)
+                .length === 0 ? (
                 <div className="empty-chat">
                   <div className="empty-chat-icon">✦</div>
                   <h3>Welcome to Orbit, {username}!</h3>
                   <p>Send a message to get your conversation started.</p>
                 </div>
               ) : (
-                messages.map((item) => (
+                messages
+                  .filter((item) => item.roomId === selectedRoomId)
+                  .map((item) => (
                   <div
                     key={item.id}
                     className={`message-row ${

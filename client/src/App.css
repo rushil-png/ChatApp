@@ -298,6 +298,7 @@ box-shadow: 0 8px 30px rgba(53, 39, 105, 0.04);
 
 .chat-sidebar {
 padding: 22px 16px;
+overflow-y: auto;
 }
 
 .chat-sidebar h2 {
@@ -320,6 +321,11 @@ color: #202033;
 text-align: left;
 }
 
+.conversation.active {
+background: #e8e0ff;
+box-shadow: inset 3px 0 #7657ee;
+}
+
 .conversation span:last-child {
 display: flex;
 flex-direction: column;
@@ -340,6 +346,96 @@ margin: 20px 6px;
 color: #625e70;
 font-size: 12px;
 line-height: 1.6;
+}
+
+.sidebar-section {
+margin-top: 24px;
+}
+
+.sidebar-section h3 {
+display: flex;
+align-items: center;
+justify-content: space-between;
+margin: 0 6px 10px;
+color: #514b61;
+font-size: 12px;
+font-weight: 750;
+text-transform: uppercase;
+letter-spacing: 0.06em;
+}
+
+.sidebar-section h3 span {
+color: #7657ee;
+}
+
+.online-user {
+display: grid;
+grid-template-columns: 10px minmax(0, 1fr) auto;
+align-items: center;
+gap: 8px;
+padding: 9px 6px;
+}
+
+.online-user-dot {
+width: 9px;
+height: 9px;
+border-radius: 50%;
+box-shadow: 0 0 0 2px #f5f2ff;
+}
+
+.online-user-name {
+overflow: hidden;
+color: #29263e;
+font-size: 12px;
+font-weight: 650;
+text-overflow: ellipsis;
+white-space: nowrap;
+}
+
+.online-user button,
+.incoming-request button {
+padding: 6px 9px;
+border: 0;
+border-radius: 8px;
+background: #7657ee;
+color: #fff;
+font-size: 11px;
+font-weight: 700;
+}
+
+.online-user button:disabled {
+background: #e8e4f1;
+color: #625e70;
+}
+
+.request-status {
+grid-column: 2 / -1;
+margin-top: -5px;
+color: #625e70;
+font-size: 10px;
+}
+
+.incoming-request {
+display: flex;
+flex-direction: column;
+gap: 9px;
+padding: 10px;
+border: 1px solid #e8e0ff;
+border-radius: 12px;
+background: #faf9ff;
+color: #29263e;
+font-size: 12px;
+}
+
+.incoming-request div {
+display: flex;
+gap: 8px;
+}
+
+.incoming-request .decline-request {
+border: 1px solid #dedbea;
+background: #fff;
+color: #514b61;
 }
 
 .chat-room {
@@ -581,10 +677,6 @@ padding: 16px;
 
 .chat-sidebar h2 {
 margin-bottom: 12px;
-}
-
-.sidebar-note {
-display: none;
 }
 
 .chat-room {
