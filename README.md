@@ -16,3 +16,7 @@ The sidebar lists currently connected sessions. Select Request to invite
 someone to a one-to-one chat; they can accept or decline, and accepted chats
 appear under Private chats. Presence, requests, and private conversations are
 live-only and reset when a participant disconnects or the server restarts.
+If a participant logs out, the other user keeps the open conversation and sees
+that they logged out; messages are disabled until they are available again.
+Use Leave chat from the conversation header or sidebar to remove the private
+conversation from your list.

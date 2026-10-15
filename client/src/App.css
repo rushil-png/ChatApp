@@ -326,6 +326,36 @@ background: #e8e0ff;
 box-shadow: inset 3px 0 #7657ee;
 }
 
+.private-conversation-row {
+display: flex;
+align-items: center;
+gap: 4px;
+}
+
+.private-conversation {
+flex: 1;
+width: auto;
+min-width: 0;
+}
+
+.leave-chat-button {
+flex: 0 0 30px;
+width: 30px;
+height: 30px;
+border: 1px solid #e5e0f2;
+border-radius: 9px;
+background: #fff;
+color: #625e70;
+font-size: 20px;
+line-height: 1;
+}
+
+.leave-chat-button:hover {
+border-color: #c9baf7;
+background: #f7f4ff;
+color: #6545d7;
+}
+
 .conversation span:last-child {
 display: flex;
 flex-direction: column;
@@ -468,6 +498,29 @@ font-size: 17px;
 margin: 0;
 color: #625e70;
 font-size: 12px;
+}
+
+.room-header-actions {
+display: flex;
+align-items: center;
+justify-content: flex-end;
+flex-wrap: wrap;
+gap: 12px;
+}
+
+.leave-chat-header-button {
+padding: 8px 11px;
+border: 1px solid #dedbea;
+border-radius: 9px;
+background: #fff;
+color: #514b61;
+font-size: 12px;
+font-weight: 650;
+}
+
+.leave-chat-header-button:hover {
+border-color: #c9baf7;
+color: #6545d7;
 }
 
 .online-indicator {
@@ -614,6 +667,12 @@ border-color: #8062ef;
 box-shadow: 0 0 0 3px rgba(128, 98, 239, 0.1);
 }
 
+.message-form input:disabled {
+background: #f7f6fa;
+color: #625e70;
+cursor: not-allowed;
+}
+
 .message-form button {
 padding: 14px 18px;
 border: none;
@@ -685,6 +744,10 @@ min-height: 55vh;
 
 .room-header {
 padding: 16px;
+}
+
+.room-header-actions {
+gap: 8px;
 }
 
 .message-list {

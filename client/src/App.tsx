@@ -29,6 +29,7 @@ type IncomingChatRequest = {
 type PrivateChat = {
   roomId: string;
   username: string;
+  status: "online" | "logged-out" | "disconnected" | "left";
 };
 
 const API_URL =
@@ -93,12 +94,12 @@ export default function App() {
     });
     socket.on("disconnect", () => {
       setChatConnected(false);
+      setOnlineUsers([]);
       setIncomingRequests([]);
-      setPrivateChats([]);
       setRequestStatuses({});
-      selectedRoomIdRef.current = "general";
-      setSelectedRoomId("general");
-      setChatTitle("General chat");
+      setPrivateChats((previous) =>
+        previous.map((chat) => ({ ...chat, status: "disconnected" }))
+      );
     });
     socket.on("connect_error", () => setChatConnected(false));
     socket.on("online-users", (users: OnlineUser[]) => {
@@ -151,7 +152,7 @@ export default function App() {
       (chat: PrivateChat) => {
         setPrivateChats((previous) => [
           ...previous.filter((item) => item.roomId !== chat.roomId),
-          chat,
+          { ...chat, status: "online" },
         ]);
         setIncomingRequests((previous) =>
           previous.filter((item) => item.username !== chat.username)
@@ -162,16 +163,18 @@ export default function App() {
       }
     );
     socket.on(
-      "private-chat-ended",
-      ({ roomId }: { roomId: string }) => {
+      "private-chat-peer-status",
+      (update: {
+        roomId: string;
+        status: PrivateChat["status"];
+      }) => {
         setPrivateChats((previous) =>
-          previous.filter((chat) => chat.roomId !== roomId)
+          previous.map((chat) =>
+            chat.roomId === update.roomId
+              ? { ...chat, status: update.status }
+              : chat
+          )
         );
-        if (selectedRoomIdRef.current === roomId) {
-          selectedRoomIdRef.current = "general";
-          setSelectedRoomId("general");
-          setChatTitle("General chat");
-        }
       }
     );
     socket.on(
@@ -424,6 +427,17 @@ export default function App() {
   }
 
   async function logout() {
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      await new Promise<void>((resolve) => {
+        const timeout = window.setTimeout(resolve, 1000);
+        socket.emit("logging-out", () => {
+          window.clearTimeout(timeout);
+          resolve();
+        });
+      });
+    }
+
     try {
       await fetch(`${API_URL}/api/auth/logout`, {
         method: "POST",
@@ -570,6 +584,44 @@ export default function App() {
     setChatTitle(title);
   }
 
+  function leavePrivateChat(roomId: string) {
+    const removeChat = () => {
+      setPrivateChats((previous) =>
+        previous.filter((chat) => chat.roomId !== roomId)
+      );
+      setMessages((previous) =>
+        previous.filter((item) => item.roomId !== roomId)
+      );
+      if (selectedRoomIdRef.current === roomId) {
+        selectedRoomIdRef.current = "general";
+        setSelectedRoomId("general");
+        setChatTitle("General chat");
+      }
+    };
+
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      removeChat();
+      return;
+    }
+
+    socket.timeout(1500).emit(
+      "leave-private-chat",
+      { roomId },
+      (error: Error | null, response: { ok: boolean }) => {
+        if (!error && response?.ok) {
+          removeChat();
+        }
+      }
+    );
+  }
+
+  const activePrivateChat = privateChats.find(
+    (chat) => chat.roomId === selectedRoomId
+  );
+  const canSendMessage =
+    selectedRoomId === "general" || activePrivateChat?.status === "online";
+
   if (showChat) {
     return (
       <main className="chat-page">
@@ -682,21 +734,39 @@ export default function App() {
               <div className="sidebar-section">
                 <h3>Private chats</h3>
                 {privateChats.map((chat) => (
-                  <button
-                    className={`conversation private-conversation ${
-                      selectedRoomId === chat.roomId ? "active" : ""
-                    }`}
-                    key={chat.roomId}
-                    onClick={() =>
-                      openConversation(chat.roomId, `@${chat.username}`)
-                    }
-                  >
-                    <span className="conversation-avatar">↗</span>
-                    <span>
-                      <strong>@{chat.username}</strong>
-                      <small>Private conversation</small>
-                    </span>
-                  </button>
+                  <div className="private-conversation-row" key={chat.roomId}>
+                    <button
+                      className={`conversation private-conversation ${
+                        selectedRoomId === chat.roomId ? "active" : ""
+                      }`}
+                      onClick={() =>
+                        openConversation(chat.roomId, `@${chat.username}`)
+                      }
+                    >
+                      <span className="conversation-avatar">↗</span>
+                      <span>
+                        <strong>@{chat.username}</strong>
+                        <small>
+                          {chat.status === "online"
+                            ? "Private conversation"
+                            : chat.status === "logged-out"
+                              ? "They logged out"
+                              : chat.status === "left"
+                                ? "They left this chat"
+                                : "They disconnected"}
+                        </small>
+                      </span>
+                    </button>
+                    <button
+                      className="leave-chat-button"
+                      type="button"
+                      aria-label={`Leave chat with ${chat.username}`}
+                      title="Leave chat"
+                      onClick={() => leavePrivateChat(chat.roomId)}
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -780,13 +850,42 @@ export default function App() {
             <div className="room-header">
               <div>
                 <h2>{chatTitle}</h2>
-                <p>Your space to connect</p>
+                <p>
+                  {activePrivateChat
+                    ? activePrivateChat.status === "logged-out"
+                      ? `@${activePrivateChat.username} logged out. This chat is kept here.`
+                      : activePrivateChat.status === "left"
+                        ? `@${activePrivateChat.username} left this chat.`
+                        : activePrivateChat.status === "disconnected"
+                          ? `@${activePrivateChat.username} disconnected. This chat is kept here.`
+                          : `Private chat with @${activePrivateChat.username}`
+                    : "Your space to connect"}
+                </p>
               </div>
 
-              <span className="online-indicator">
-                <span className={chatConnected ? "connected" : ""} />
-                {chatConnected ? "Live chat" : "Connecting..."}
-              </span>
+              <div className="room-header-actions">
+                {activePrivateChat && (
+                  <button
+                    className="leave-chat-header-button"
+                    type="button"
+                    onClick={() => leavePrivateChat(activePrivateChat.roomId)}
+                  >
+                    Leave chat
+                  </button>
+                )}
+                <span className="online-indicator">
+                  <span
+                    className={
+                      chatConnected && canSendMessage ? "connected" : ""
+                    }
+                  />
+                  {activePrivateChat && activePrivateChat.status !== "online"
+                    ? "Chat unavailable"
+                    : chatConnected
+                      ? "Live chat"
+                      : "Connecting..."}
+                </span>
+              </div>
             </div>
 
             <div className="message-list" ref={messageListRef}>
@@ -795,7 +894,11 @@ export default function App() {
                 <div className="empty-chat">
                   <div className="empty-chat-icon">✦</div>
                   <h3>Welcome to Orbit, {username}!</h3>
-                  <p>Send a message to get your conversation started.</p>
+                  <p>
+                    {activePrivateChat && !canSendMessage
+                      ? "Your conversation is kept here, but you can’t send messages while they’re away."
+                      : "Send a message to get your conversation started."}
+                  </p>
                 </div>
               ) : (
                 messages
@@ -830,16 +933,21 @@ export default function App() {
             <form className="message-form" onSubmit={sendMessage}>
               <input
                 type="text"
-                placeholder="Write a message..."
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
                 maxLength={2000}
                 aria-label="Write a message"
+                disabled={!canSendMessage}
+                placeholder={
+                  canSendMessage
+                    ? "Write a message..."
+                    : "This chat is unavailable while they are away"
+                }
               />
 
               <button
                 type="submit"
-                disabled={!message.trim() || !chatConnected}
+                disabled={!message.trim() || !chatConnected || !canSendMessage}
               >
                 Send <span>➤</span>
               </button>

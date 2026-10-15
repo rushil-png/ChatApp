@@ -80,6 +80,41 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
   const identity = socket.data.chatIdentity as OnlineUser;
+  let offlineHandled = false;
+
+  const markOffline = (status: "logged-out" | "disconnected") => {
+    onlineUsers.delete(socket.id);
+    io.emit("user-offline", { id: socket.id });
+
+    for (const [requestId, request] of pendingChatRequests) {
+      if (request.from === socket.id || request.to === socket.id) {
+        pendingChatRequests.delete(requestId);
+        const otherId = request.from === socket.id ? request.to : request.from;
+        io.to(otherId).emit("chat-request-result", {
+          status: "unavailable",
+          targetId: socket.id,
+        });
+      }
+    }
+
+    for (const [roomId, members] of privateConversations) {
+      if (!members.delete(socket.id)) continue;
+      for (const member of members) {
+        io.to(member).emit("private-chat-peer-status", {
+          roomId,
+          status,
+          username: identity.username,
+        });
+      }
+      socket.leave(roomId);
+      if (members.size === 0) {
+        privateConversations.delete(roomId);
+      }
+    }
+
+    offlineHandled = true;
+  };
+
   onlineUsers.set(socket.id, identity);
   socket.emit(
     "online-users",
@@ -110,6 +145,10 @@ io.on("connection", (socket) => {
           ? socket.rooms.has("general")
           : typeof data?.roomId === "string" &&
             privateConversations.get(data.roomId)?.has(socket.id) === true &&
+            privateConversations.get(data.roomId)?.size === 2 &&
+            [...(privateConversations.get(data.roomId) ?? [])].every((member) =>
+              onlineUsers.has(member)
+            ) &&
             socket.rooms.has(data.roomId);
 
       if (
@@ -234,30 +273,53 @@ io.on("connection", (socket) => {
     }
   );
 
-  // Handle disconnections
-  socket.on("disconnect", () => {
-    onlineUsers.delete(socket.id);
-    io.emit("user-offline", { id: socket.id });
+  socket.on(
+    "leave-private-chat",
+    (
+      data: { roomId?: unknown },
+      acknowledge?: (result: { ok: boolean }) => void
+    ) => {
+      if (
+        typeof data?.roomId !== "string" ||
+        !privateConversations.get(data.roomId)?.has(socket.id)
+      ) {
+        acknowledge?.({ ok: false });
+        return;
+      }
 
-    for (const [requestId, request] of pendingChatRequests) {
-      if (request.from === socket.id || request.to === socket.id) {
-        pendingChatRequests.delete(requestId);
-        const otherId = request.from === socket.id ? request.to : request.from;
-        io.to(otherId).emit("chat-request-result", {
-          status: "unavailable",
-          targetId: socket.id,
+      const members = privateConversations.get(data.roomId);
+      if (!members) {
+        acknowledge?.({ ok: false });
+        return;
+      }
+
+      members.delete(socket.id);
+      socket.leave(data.roomId);
+      for (const member of members) {
+        io.to(member).emit("private-chat-peer-status", {
+          roomId: data.roomId,
+          status: "left",
+          username: identity.username,
         });
       }
-    }
-
-    for (const [roomId, members] of privateConversations) {
-      if (!members.has(socket.id)) continue;
-      privateConversations.delete(roomId);
-      for (const member of members) {
-        if (member !== socket.id) {
-          io.to(member).emit("private-chat-ended", { roomId });
-        }
+      if (members.size === 0) {
+        privateConversations.delete(data.roomId);
       }
+      acknowledge?.({ ok: true });
+    }
+  );
+
+  socket.on("logging-out", (acknowledge?: () => void) => {
+    if (!offlineHandled) {
+      markOffline("logged-out");
+    }
+    acknowledge?.();
+  });
+
+  // Handle disconnections
+  socket.on("disconnect", () => {
+    if (!offlineHandled) {
+      markOffline("disconnected");
     }
 
     console.log(`User disconnected: ${socket.id}`);
