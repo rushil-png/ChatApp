@@ -24,10 +24,17 @@ conversation from your list.
 # TO DO:
 
 Typing indicator — show when someone in a private chat is typing.
+
 Unread message badges — show unread counts on chats in the sidebar.
+
 Message timestamps — subtle times beside messages, with date separators between days.
+
 Search in conversation — find a message without scrolling through the whole chat.
+
 Better mobile layout — make the sidebar and conversation switch cleanly on small screens.
+
 Empty states — helpful prompts when there are no private chats, requests, or messages.
+
 Connection/reconnect feedback — make it clear when chat is reconnecting or offline.
+
 Message actions — hover/tap controls for copying a message or reacting with an emoji.
