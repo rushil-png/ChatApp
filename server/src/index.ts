@@ -15,16 +15,19 @@ const app = express();
 const httpServer = createServer(app);
  
 const PORT = Number(process.env.PORT ?? 3000);
-const FRONTEND_URL = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://192.168.1.164:5173",
+const FRONTEND_URLS = [
+  /^http:\/\/(?:localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):5173$/,
+  ...(
+    process.env.FRONTEND_URL?.split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean) ?? []
+  ),
 ];
  
 // Middleware
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: FRONTEND_URLS,
     credentials: true,
     // PATCH is required for changing usernames (PATCH /api/auth/username)
     methods: ["GET", "POST", "PATCH", "OPTIONS"],
@@ -46,7 +49,7 @@ app.use("/api/auth", authRouter);
 // Socket.IO setup
 const io = new Server(httpServer, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: FRONTEND_URLS,
     credentials: true,
     methods: ["GET", "POST"],
   },
@@ -384,5 +387,5 @@ io.on("connection", (socket) => {
 // Start the server
 httpServer.listen(PORT, () => {
   console.log(`Orbit API running at http://localhost:${PORT}`);
-  console.log(`Allowed frontend origin: ${FRONTEND_URL}`);
+  console.log(`Allowed frontend origins: ${FRONTEND_URLS.join(", ")}`);
 });
