@@ -140,6 +140,7 @@ export default function App() {
           declined: "Request declined",
           unavailable: "User is no longer online",
           pending: "Finish your current request first",
+          "already-chatting": "You already have a chat with this user",
         };
         setRequestStatuses((previous) => ({
           ...previous,
@@ -151,7 +152,11 @@ export default function App() {
       "private-chat-started",
       (chat: PrivateChat) => {
         setPrivateChats((previous) => [
-          ...previous.filter((item) => item.roomId !== chat.roomId),
+          ...previous.filter(
+            (item) =>
+              item.roomId !== chat.roomId &&
+              item.username.toLowerCase() !== chat.username.toLowerCase()
+          ),
           { ...chat, status: "online" },
         ]);
         setIncomingRequests((previous) =>
@@ -619,6 +624,11 @@ export default function App() {
   const activePrivateChat = privateChats.find(
     (chat) => chat.roomId === selectedRoomId
   );
+  const activePrivateChatUsernames = new Set(
+    privateChats
+      .filter((chat) => chat.status === "online")
+      .map((chat) => chat.username.toLowerCase())
+  );
   const canSendMessage =
     selectedRoomId === "general" || activePrivateChat?.status === "online";
 
@@ -787,16 +797,23 @@ export default function App() {
                       type="button"
                       disabled={
                         !chatConnected ||
+                        activePrivateChatUsernames.has(
+                          user.username.toLowerCase()
+                        ) ||
                         requestStatuses[user.id] === "Request sent" ||
                         requestStatuses[user.id] === "Sending request..."
                       }
                       onClick={() => requestChat(user.id)}
                     >
-                      {requestStatuses[user.id] === "Sending request..."
-                        ? "Sending..."
-                        : requestStatuses[user.id] === "Request sent"
-                          ? "Sent"
-                          : "Request"}
+                      {activePrivateChatUsernames.has(
+                        user.username.toLowerCase()
+                      )
+                        ? "In chat"
+                        : requestStatuses[user.id] === "Sending request..."
+                          ? "Sending..."
+                          : requestStatuses[user.id] === "Request sent"
+                            ? "Sent"
+                            : "Request"}
                     </button>
                     {requestStatuses[user.id] &&
                       requestStatuses[user.id] !== "Sending request..." && (

@@ -70,6 +70,12 @@ type PendingChatRequest = {
 const onlineUsers = new Map<string, OnlineUser>();
 const pendingChatRequests = new Map<string, PendingChatRequest>();
 const privateConversations = new Map<string, Set<string>>();
+const privateConversationByPair = new Map<string, string>();
+const privateConversationPairByRoom = new Map<string, string>();
+
+function getPrivateConversationPairKey(first: string, second: string) {
+  return [first.toLowerCase(), second.toLowerCase()].sort().join("\0");
+}
 
 setChatSessionRevoker((sessionTokenHashes, status) => {
   const revokedSessions = new Set(sessionTokenHashes);
@@ -144,6 +150,9 @@ io.on("connection", (socket) => {
       socket.leave(roomId);
       if (members.size === 0) {
         privateConversations.delete(roomId);
+        const pairKey = privateConversationPairByRoom.get(roomId);
+        if (pairKey) privateConversationByPair.delete(pairKey);
+        privateConversationPairByRoom.delete(roomId);
       }
     }
 
@@ -243,7 +252,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const requestId = randomUUID();
     const target = onlineUsers.get(targetId);
     if (!target) {
       socket.emit("chat-request-result", {
@@ -253,6 +261,26 @@ io.on("connection", (socket) => {
       return;
     }
 
+    const pairKey = getPrivateConversationPairKey(
+      identity.username,
+      target.username
+    );
+    const existingRoomId = privateConversationByPair.get(pairKey);
+    const existingMembers = existingRoomId
+      ? privateConversations.get(existingRoomId)
+      : undefined;
+    const onlineMembers = [...(existingMembers ?? [])].filter((memberId) =>
+      onlineUsers.has(memberId)
+    );
+    if (onlineMembers.length > 1) {
+      socket.emit("chat-request-result", {
+        status: "already-chatting",
+        targetId,
+      });
+      return;
+    }
+
+    const requestId = randomUUID();
     pendingChatRequests.set(requestId, {
       from: socket.id,
       to: targetId,
@@ -310,9 +338,28 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const roomId = `private-${randomUUID()}`;
-      const members = new Set([request.from, socket.id]);
-      privateConversations.set(roomId, members);
+      const pairKey = getPrivateConversationPairKey(
+        request.fromUsername,
+        request.toUsername
+      );
+      let roomId = privateConversationByPair.get(pairKey);
+      let members = roomId ? privateConversations.get(roomId) : undefined;
+      if (!roomId || !members) {
+        roomId = `private-${randomUUID()}`;
+        members = new Set<string>();
+        privateConversations.set(roomId, members);
+        privateConversationByPair.set(pairKey, roomId);
+        privateConversationPairByRoom.set(roomId, pairKey);
+      }
+
+      for (const memberId of members) {
+        if (memberId !== request.from && memberId !== socket.id) {
+          members.delete(memberId);
+          io.sockets.sockets.get(memberId)?.leave(roomId);
+        }
+      }
+      members.add(request.from);
+      members.add(socket.id);
       requester.join(roomId);
       socket.join(roomId);
       requester.emit("private-chat-started", {
@@ -357,6 +404,9 @@ io.on("connection", (socket) => {
       }
       if (members.size === 0) {
         privateConversations.delete(data.roomId);
+        const pairKey = privateConversationPairByRoom.get(data.roomId);
+        if (pairKey) privateConversationByPair.delete(pairKey);
+        privateConversationPairByRoom.delete(data.roomId);
       }
       acknowledge?.({ ok: true });
     }
